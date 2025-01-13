@@ -90,7 +90,7 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 		}
 		if resp == nil {
 			// log.Printf("  all upstream not found")
-			log.Ctx(ctx).Debug().Msg("all upstream not found")
+			log.Ctx(ctx).Warn().Msg("all upstream not found")
 			w.WriteHeader(404)
 			return
 		}
