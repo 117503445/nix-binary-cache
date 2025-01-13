@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +11,8 @@ import (
 	"github.com/117503445/goutils"
 	"github.com/rs/zerolog/log"
 )
+
+const cacheDir = "./cache/"
 
 type upstream struct {
 	URL      string
@@ -30,6 +33,13 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Debug().Str("path", r.URL.Path).Msg("request")
 		// TODO 优先从缓存中读取。
+		cacheFilePath := cacheDir + fmt.Sprintf("%x", r.URL.String())
+		if _, err := os.Stat(cacheFilePath); err == nil {
+			log.Debug().Str("cacheFile", cacheFilePath).Msg("cache hit")	
+			// Cache hit: Serve the cached file
+			http.ServeFile(w, r, cacheFilePath)
+			return
+		}
 
 		// 尝试按顺序 upstream 中获取
 		var resp *http.Response
@@ -59,14 +69,33 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 			return
 		}
 		defer resp.Body.Close()
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-		// TODO 起一个协程写入缓存中。
+		// w.WriteHeader(resp.StatusCode)
+
+		// write resp.Body to cachefile
+		cacheFile, err := os.Create(cacheFilePath)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to create cache file") // TODO: 500
+			return
+		}
+		defer cacheFile.Close()
+
+		// TODO: write to temp file first
+		_, err = io.Copy(cacheFile, resp.Body)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to write cache file") // TODO: 500
+			return
+		}
+
+		// Serve the response to the client
+		http.ServeFile(w, r, cacheFilePath)
 	}, nil
 }
 
 func main() {
 	goutils.InitZeroLog()
+	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
+		log.Fatal().Err(err).Msg("failed to create cache dir")
+	}
 
 	upstreams := []upstream{
 		{
