@@ -4,4 +4,4 @@ tasks:
   default:
     desc: "The default task" 
     cmds:
-      - HTTP_PROXY=http://192.168.100.187:1080 go run main.go
+      - HTTP_PROXY=http://192.168.100.187:1080 go run . serve

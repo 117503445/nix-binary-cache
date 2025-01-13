@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/117503445/goutils"
+	"github.com/alecthomas/kong"
 	"github.com/rs/zerolog/log"
 )
 
@@ -36,8 +38,27 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 		ctx = log.With().Str("reqID", reqID).Logger().WithContext(ctx)
 
 		log.Ctx(ctx).Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("request")
-		// TODO 优先从缓存中读取。
+
 		cacheFilePath := cacheDir + fmt.Sprintf("%x", r.URL.String())
+		if r.Method == "PUT" {
+			cacheFile, err := os.Create(cacheFilePath)
+			if err != nil {
+				log.Ctx(ctx).Fatal().Err(err).Msg("failed to create cache file") // TODO: 500
+				return
+			}
+			defer cacheFile.Close()
+
+			_, err = io.Copy(cacheFile, r.Body)
+			if err != nil {
+				log.Ctx(ctx).Fatal().Err(err).Msg("failed to write cache file") // TODO: 500
+				return
+			}
+
+			w.WriteHeader(200)
+			return
+		}
+
+		// TODO 优先从缓存中读取。
 		if _, err := os.Stat(cacheFilePath); err == nil {
 			log.Ctx(ctx).Debug().Str("cacheFile", cacheFilePath).Msg("cache hit")
 			// Cache hit: Serve the cached file
@@ -96,8 +117,10 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 	}, nil
 }
 
-func main() {
-	goutils.InitZeroLog(goutils.WithProduction{})
+type CmdServe struct {
+}
+
+func (cmd *CmdServe) Run() error {
 	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
 		log.Fatal().Err(err).Msg("failed to create cache dir")
 	}
@@ -127,4 +150,38 @@ func main() {
 	if err := http.ListenAndServe(":8000", nil); err != nil {
 		log.Fatal().Err(err).Msg("failed to listen")
 	}
+	return nil
+}
+
+type CmdList struct {
+}
+
+func (cmd *CmdList) Run() error {
+	files, err := os.ReadDir(cacheDir)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to read cache dir")
+	}
+	for _, file := range files {
+		name := file.Name()
+		// convert from hex to string
+		fileName , err:= hex.DecodeString(name)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to decode file name")
+		}
+
+		log.Info().Str("file", string(fileName)).Msg("")
+	}
+	return nil
+}
+
+func main() {
+	goutils.InitZeroLog(goutils.WithProduction{})
+
+	var cli struct {
+		Serve CmdServe `cmd:"" help:"start a server"`
+		List  CmdList  `cmd:"list" help:"list all cache files"`
+	}
+	ctx := kong.Parse(&cli)
+	err := ctx.Run()
+	ctx.FatalIfErrorf(err)
 }
