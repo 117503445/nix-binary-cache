@@ -21,6 +21,34 @@ type upstream struct {
 	UseProxy bool
 }
 
+func atomicWriteFile(path string, reader io.Reader) error {
+	dirCacheTmp := "./cache/tmp"
+	err := os.MkdirAll(dirCacheTmp, os.ModePerm)
+	if err != nil {
+		return err
+	}
+
+
+	file, err := os.CreateTemp("./cache/tmp", "nix-binary-cache-")
+	if err != nil {
+		return err
+	}
+	// defer os.Remove(file.Name())
+	defer file.Close()
+
+	_, err = io.Copy(file, reader)
+	if err != nil {
+		return err
+	}
+
+	err = os.Rename(file.Name(), path)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWriter, r *http.Request), error) {
 	client := http.DefaultClient
 	proxyClient := http.DefaultClient
@@ -41,14 +69,7 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 
 		cacheFilePath := cacheDir + fmt.Sprintf("%x", r.URL.String())
 		if r.Method == "PUT" {
-			cacheFile, err := os.Create(cacheFilePath)
-			if err != nil {
-				log.Ctx(ctx).Fatal().Err(err).Msg("failed to create cache file") // TODO: 500
-				return
-			}
-			defer cacheFile.Close()
-
-			_, err = io.Copy(cacheFile, r.Body)
+			err := atomicWriteFile(cacheFilePath, r.Body)
 			if err != nil {
 				log.Ctx(ctx).Fatal().Err(err).Msg("failed to write cache file") // TODO: 500
 				return
@@ -95,18 +116,8 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 			return
 		}
 		defer resp.Body.Close()
-		// w.WriteHeader(resp.StatusCode)
 
-		// write resp.Body to cachefile
-		cacheFile, err := os.Create(cacheFilePath)
-		if err != nil {
-			log.Ctx(ctx).Fatal().Err(err).Msg("failed to create cache file") // TODO: 500
-			return
-		}
-		defer cacheFile.Close()
-
-		// TODO: write to temp file first
-		_, err = io.Copy(cacheFile, resp.Body)
+		err := atomicWriteFile(cacheFilePath, resp.Body)
 		if err != nil {
 			log.Ctx(ctx).Fatal().Err(err).Msg("failed to write cache file") // TODO: 500
 			return
@@ -164,7 +175,7 @@ func (cmd *CmdList) Run() error {
 	for _, file := range files {
 		name := file.Name()
 		// convert from hex to string
-		fileName , err:= hex.DecodeString(name)
+		fileName, err := hex.DecodeString(name)
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to decode file name")
 		}
