@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -16,6 +17,11 @@ import (
 
 const cacheDir = "./cache/"
 
+func UrlToPath(url string) string {
+	// use sha256
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(url)))
+}
+
 type upstream struct {
 	URL      string
 	UseProxy bool
@@ -28,12 +34,10 @@ func atomicWriteFile(path string, reader io.Reader) error {
 		return err
 	}
 
-
 	file, err := os.CreateTemp("./cache/tmp", "nix-binary-cache-")
 	if err != nil {
 		return err
 	}
-	// defer os.Remove(file.Name())
 	defer file.Close()
 
 	_, err = io.Copy(file, reader)
@@ -67,7 +71,7 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 
 		log.Ctx(ctx).Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("request")
 
-		cacheFilePath := cacheDir + fmt.Sprintf("%x", r.URL.String())
+		cacheFilePath := cacheDir + UrlToPath(r.URL.Path)
 		if r.Method == "PUT" {
 			err := atomicWriteFile(cacheFilePath, r.Body)
 			if err != nil {
@@ -79,7 +83,6 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 			return
 		}
 
-		// TODO 优先从缓存中读取。
 		if _, err := os.Stat(cacheFilePath); err == nil {
 			log.Ctx(ctx).Debug().Str("cacheFile", cacheFilePath).Msg("cache hit")
 			// Cache hit: Serve the cached file
