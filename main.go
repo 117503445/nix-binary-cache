@@ -26,13 +26,13 @@ type upstream struct {
 }
 
 func atomicWriteFile(path string, reader io.Reader) error {
-	dirCacheTmp := "./cache/tmp"
+	dirCacheTmp := fmt.Sprintf("%s/tmp", cli.CacheDir)
 	err := os.MkdirAll(dirCacheTmp, os.ModePerm)
 	if err != nil {
 		return err
 	}
 
-	file, err := os.CreateTemp("./cache/tmp", "nix-binary-cache-")
+	file, err := os.CreateTemp(dirCacheTmp, "nix-binary-cache-")
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 
 		log.Ctx(ctx).Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("request")
 
-		cacheFilePath := cli.CacheDir + UrlToPath(r.URL.Path)
+		cacheFilePath := fmt.Sprintf("%s/%s", cli.CacheDir, UrlToPath(r.URL.Path))
 		if r.Method == "PUT" {
 			err := atomicWriteFile(cacheFilePath, r.Body)
 			if err != nil {
@@ -195,10 +195,12 @@ var cli struct {
 
 func main() {
 	ctx := kong.Parse(&cli)
+	cli.CacheDir = strings.TrimSuffix(cli.CacheDir, "/")
 
 	goutils.InitZeroLog(goutils.WithProduction{
 		DirLog: cli.LogDir,
 	})
+	log.Debug().Interface("cli", cli).Msg("")
 
 	err := ctx.Run()
 	ctx.FatalIfErrorf(err)
