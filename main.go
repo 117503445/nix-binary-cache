@@ -15,8 +15,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const cacheDir = "./cache/"
-
 func UrlToPath(url string) string {
 	// use sha256
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(url)))
@@ -71,7 +69,7 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 
 		log.Ctx(ctx).Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("request")
 
-		cacheFilePath := cacheDir + UrlToPath(r.URL.Path)
+		cacheFilePath := cli.CacheDir + UrlToPath(r.URL.Path)
 		if r.Method == "PUT" {
 			err := atomicWriteFile(cacheFilePath, r.Body)
 			if err != nil {
@@ -135,7 +133,7 @@ type CmdServe struct {
 }
 
 func (cmd *CmdServe) Run() error {
-	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(cli.CacheDir, os.ModePerm); err != nil {
 		log.Fatal().Err(err).Msg("failed to create cache dir")
 	}
 
@@ -153,9 +151,7 @@ func (cmd *CmdServe) Run() error {
 			UseProxy: true,
 		},
 	}
-	httpProxy := os.Getenv("HTTP_PROXY")
-	os.Unsetenv("HTTP_PROXY")
-	handle, err := newHandle(httpProxy, upstreams)
+	handle, err := newHandle(cli.Proxy, upstreams)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create handle")
 	}
@@ -171,7 +167,7 @@ type CmdList struct {
 }
 
 func (cmd *CmdList) Run() error {
-	files, err := os.ReadDir(cacheDir)
+	files, err := os.ReadDir(cli.CacheDir)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to read cache dir")
 	}
@@ -188,14 +184,22 @@ func (cmd *CmdList) Run() error {
 	return nil
 }
 
-func main() {
-	goutils.InitZeroLog(goutils.WithProduction{})
+var cli struct {
+	Serve CmdServe `cmd:"serve" help:"start a server"`
+	List  CmdList  `cmd:"list" help:"list all cache files"`
 
-	var cli struct {
-		Serve CmdServe `cmd:"" help:"start a server"`
-		List  CmdList  `cmd:"list" help:"list all cache files"`
-	}
+	CacheDir string `help:"cache dir" default:"./cache"`
+	LogDir   string `help:"log dir" default:"./logs"`
+	Proxy    string `help:"http proxy"`
+}
+
+func main() {
 	ctx := kong.Parse(&cli)
+
+	goutils.InitZeroLog(goutils.WithProduction{
+		DirLog: cli.LogDir,
+	})
+
 	err := ctx.Run()
 	ctx.FatalIfErrorf(err)
 }
