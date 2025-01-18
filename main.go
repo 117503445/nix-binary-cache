@@ -73,7 +73,8 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 		if r.Method == "PUT" {
 			err := atomicWriteFile(cacheFilePath, r.Body)
 			if err != nil {
-				log.Ctx(ctx).Fatal().Err(err).Msg("failed to write cache file") // TODO: 500
+				log.Ctx(ctx).Warn().Err(err).Msg("failed to write cache file")
+				w.WriteHeader(500)
 				return
 			}
 
@@ -111,7 +112,6 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 			break
 		}
 		if resp == nil {
-			// log.Printf("  all upstream not found")
 			log.Ctx(ctx).Warn().Msg("all upstream not found")
 			w.WriteHeader(404)
 			return
@@ -120,7 +120,8 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 
 		err := atomicWriteFile(cacheFilePath, resp.Body)
 		if err != nil {
-			log.Ctx(ctx).Fatal().Err(err).Msg("failed to write cache file") // TODO: 500
+			log.Ctx(ctx).Warn().Err(err).Msg("failed to write cache file")
+			w.WriteHeader(500)
 			return
 		}
 
