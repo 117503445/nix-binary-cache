@@ -4,4 +4,8 @@ tasks:
   default:
     desc: "The default task" 
     cmds:
-      - HTTP_PROXY=http://192.168.100.187:1080 go run . serve
+      - go run . serve
+  
+  build-image:
+    cmds:
+      - ./scripts/build-image.sh
