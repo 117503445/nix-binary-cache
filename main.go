@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,88 +20,102 @@ func UrlToPath(url string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(url)))
 }
 
-type upstream struct {
-	URL      string
-	UseProxy bool
+type fetcher struct {
+	clients []*http.Client
+	urls    []string
 }
 
-func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWriter, r *http.Request), error) {
-	client := http.DefaultClient
-	proxyClient := http.DefaultClient
-	if httpProxy != "" {
-		httpProxyURL, err := url.Parse(httpProxy)
-		if err != nil {
-			return nil, err
+func NewFetcher(upstreams []Upstream) *fetcher {
+	clients := []*http.Client{}
+	urls := []string{}
+	for _, upstream := range upstreams {
+		var client *http.Client
+		if upstream.Proxy != "" {
+			httpProxyURL, err := url.Parse(upstream.Proxy)
+			if err != nil {
+				log.Fatal().Err(err).Msg("failed to parse proxy url")
+			}
+			client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(httpProxyURL)}}
+		} else {
+			client = http.DefaultClient
 		}
-		proxyClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(httpProxyURL)}}
+
+		clients = append(clients, client)
+		urls = append(urls, strings.TrimSuffix(upstream.Url, "/"))
 	}
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		reqID := goutils.UUID4()
-		ctx = log.With().Str("reqID", reqID).Logger().WithContext(ctx)
+	return &fetcher{clients: clients, urls: urls}
+}
 
-		log.Ctx(ctx).Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("request")
+func (f *fetcher) Fetch(path string) *http.Response {
+	logger := log.With().Str("path", path).Logger()
+
+	for i, client := range f.clients {
+		uLogger := logger.With().Str("upstream", f.urls[i]).Logger()
+
+		url := f.urls[i] + path
+		resp, err := client.Get(url)
+		if err != nil {
+			uLogger.Debug().Err(err).Msg("request error")
+			continue
+		}
+		if resp.StatusCode != 200 {
+			uLogger.Debug().Int("statusCode", resp.StatusCode).Msg("request fail")
+			continue
+		}
+		uLogger.Debug().Msg("request success")
+		return resp
+	}
+	logger.Debug().Msg("all upstream not found")
+	return nil
+}
+
+func newHandle(fetcher *fetcher) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logger := log.With().Str("reqID", goutils.UUID4()).Logger()
+		logger.Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("request")
 
 		cacheFilePath := fmt.Sprintf("%s/%s", cli.CacheDir, UrlToPath(r.URL.Path))
+
+		// TODO: auth
 		if r.Method == "PUT" {
 			err := goutils.AtomicWriteFile(cacheFilePath, r.Body)
 			if err != nil {
-				log.Ctx(ctx).Warn().Err(err).Msg("failed to write cache file")
+				logger.Warn().Err(err).Msg("failed to write cache file")
 				w.WriteHeader(500)
 				return
 			}
-
+			logger.Debug().Str("cacheFile", cacheFilePath).Msg("cache written")
 			w.WriteHeader(200)
 			return
 		}
 
 		if _, err := os.Stat(cacheFilePath); err == nil {
-			log.Ctx(ctx).Debug().Str("cacheFile", cacheFilePath).Msg("cache hit")
+			logger.Debug().Str("cacheFile", cacheFilePath).Msg("cache hit")
 			// Cache hit: Serve the cached file
 			http.ServeFile(w, r, cacheFilePath)
 			return
 		}
 
-		// 尝试按顺序 upstream 中获取
-		var resp *http.Response
-		for _, u := range upstreams {
-			targetPath := strings.TrimSuffix(u.URL, "/") + r.URL.Path
-			c := client
-			if u.UseProxy {
-				c = proxyClient
-			}
-			_resp, err := c.Get(targetPath)
-			if err != nil {
-				log.Ctx(ctx).Debug().Err(err).Str("upstream", u.URL).Str("targetPath", targetPath).Msg("failed to get")
-				continue
-			}
-			if _resp.StatusCode != 200 {
-				log.Ctx(ctx).Debug().Str("upstream", u.URL).Str("targetPath", targetPath).Int("statusCode", _resp.StatusCode).Msg("failed to get")
-				_resp.Body.Close()
-				continue
-			}
-			log.Ctx(ctx).Debug().Str("upstream", u.URL).Str("targetPath", targetPath).Msg("success to get")
-			resp = _resp
-			break
-		}
+		resp := fetcher.Fetch(r.URL.Path)
 		if resp == nil {
-			log.Ctx(ctx).Warn().Msg("all upstream not found")
+			logger.Debug().Msg("all upstream not found")
 			w.WriteHeader(404)
 			return
 		}
-		defer resp.Body.Close()
 
+		defer resp.Body.Close()
+		// TODO: Garbage collection
 		err := goutils.AtomicWriteFile(cacheFilePath, resp.Body)
 		if err != nil {
-			log.Ctx(ctx).Warn().Err(err).Msg("failed to write cache file")
+			logger.Warn().Err(err).Msg("failed to write cache file")
 			w.WriteHeader(500)
 			return
 		}
-
+		logger.Debug().Msg("success to fetch")
 		// Serve the response to the client
 		http.ServeFile(w, r, cacheFilePath)
-	}, nil
+	}
 }
 
 type CmdServe struct {
@@ -113,25 +126,9 @@ func (cmd *CmdServe) Run() error {
 		log.Fatal().Err(err).Msg("failed to create cache dir")
 	}
 
-	upstreams := []upstream{
-		{
-			URL:      "https://mirror.sjtu.edu.cn/nix-channels/store",
-			UseProxy: false,
-		},
-		{
-			URL:      "https://mirrors.tuna.tsinghua.edu.cn/nix-channels/store",
-			UseProxy: false,
-		},
-		{
-			URL:      "https://cache.nixos.org",
-			UseProxy: true,
-		},
-	}
-	handle, err := newHandle(cli.Proxy, upstreams)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create handle")
-	}
-	http.HandleFunc("/", handle)
+	fetcher := NewFetcher(cli.Upstreams)
+	http.HandleFunc("/", newHandle(fetcher))
+
 	log.Info().Int("port", 8000).Msg("listen")
 	if err := http.ListenAndServe(":8000", nil); err != nil {
 		log.Fatal().Err(err).Msg("failed to listen")
