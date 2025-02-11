@@ -12,6 +12,7 @@ import (
 
 	"github.com/117503445/goutils"
 	"github.com/alecthomas/kong"
+	kongtoml "github.com/alecthomas/kong-toml"
 	"github.com/rs/zerolog/log"
 )
 
@@ -23,32 +24,6 @@ func UrlToPath(url string) string {
 type upstream struct {
 	URL      string
 	UseProxy bool
-}
-
-func atomicWriteFile(path string, reader io.Reader) error {
-	dirCacheTmp := fmt.Sprintf("%s/tmp", cli.CacheDir)
-	err := os.MkdirAll(dirCacheTmp, os.ModePerm)
-	if err != nil {
-		return err
-	}
-
-	file, err := os.CreateTemp(dirCacheTmp, "nix-binary-cache-")
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = io.Copy(file, reader)
-	if err != nil {
-		return err
-	}
-
-	err = os.Rename(file.Name(), path)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWriter, r *http.Request), error) {
@@ -71,7 +46,7 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 
 		cacheFilePath := fmt.Sprintf("%s/%s", cli.CacheDir, UrlToPath(r.URL.Path))
 		if r.Method == "PUT" {
-			err := atomicWriteFile(cacheFilePath, r.Body)
+			err := goutils.AtomicWriteFile(cacheFilePath, r.Body)
 			if err != nil {
 				log.Ctx(ctx).Warn().Err(err).Msg("failed to write cache file")
 				w.WriteHeader(500)
@@ -118,7 +93,7 @@ func newHandle(httpProxy string, upstreams []upstream) (func(w http.ResponseWrit
 		}
 		defer resp.Body.Close()
 
-		err := atomicWriteFile(cacheFilePath, resp.Body)
+		err := goutils.AtomicWriteFile(cacheFilePath, resp.Body)
 		if err != nil {
 			log.Ctx(ctx).Warn().Err(err).Msg("failed to write cache file")
 			w.WriteHeader(500)
@@ -191,11 +166,17 @@ var cli struct {
 
 	CacheDir string `help:"cache dir" default:"./cache"`
 	LogDir   string `help:"log dir" default:"./logs"`
-	Proxy    string `help:"http proxy"`
+
+	Upstreams []Upstream `help:"upstreams"`
+}
+
+type Upstream struct {
+	Url   string
+	Proxy string
 }
 
 func main() {
-	ctx := kong.Parse(&cli)
+	ctx := kong.Parse(&cli, kong.Configuration(kongtoml.Loader, "/workspace/config.toml"))
 	cli.CacheDir = strings.TrimSuffix(cli.CacheDir, "/")
 
 	goutils.InitZeroLog(goutils.WithProduction{
