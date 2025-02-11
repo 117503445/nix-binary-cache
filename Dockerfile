@@ -9,4 +9,4 @@ RUN CGO_ENABLED=0 go build -o app
 FROM gcr.io/distroless/static-debian12 AS prod
 WORKDIR /workspace
 COPY --from=build /workspace/app app
-ENTRYPOINT [ "./app"]
+ENTRYPOINT [ "./app", "serve"]
