@@ -72,8 +72,8 @@ func (f *fetcher) Fetch(path string) *http.Response {
 
 func newHandle(fetcher *fetcher) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		logger := log.With().Str("reqID", goutils.UUID4()).Logger()
-		logger.Debug().Str("path", r.URL.Path).Str("method", r.Method).Msg("request")
+		logger := log.With().Str("reqID", goutils.UUID4()).Str("path", r.URL.Path).Str("method", r.Method).Logger()
+		logger.Debug().Msg("request")
 
 		cacheFilePath := fmt.Sprintf("%s/%s", cli.CacheDir, UrlToPath(r.URL.Path))
 
@@ -173,7 +173,7 @@ type Upstream struct {
 }
 
 func main() {
-	ctx := kong.Parse(&cli, kong.Configuration(kongtoml.Loader, "/workspace/config.toml"))
+	ctx := kong.Parse(&cli, kong.Configuration(kongtoml.Loader, "./config.toml"))
 	cli.CacheDir = strings.TrimSuffix(cli.CacheDir, "/")
 
 	goutils.InitZeroLog(goutils.WithProduction{
