@@ -1,0 +1,17 @@
+name: nix-binary-cache
+
+services:
+  nix-binary-cache:
+    image: 117503445/nix-binary-cache
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config/config.toml:/workspace/config.toml
+      - cache:/workspace/cache
+      - logs:/workspace/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+volumes:
+  cache:
+  logs:

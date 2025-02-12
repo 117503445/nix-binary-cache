@@ -1,0 +1,9 @@
+[[upstreams]]
+url = "https://mirrors.ustc.edu.cn/nix-channels/store"
+
+[[upstreams]]
+url = "https://mirrors.tuna.tsinghua.edu.cn/nix-channels/store"
+
+[[upstreams]]
+url = "https://cache.nixos.org"
+proxy = "http://host.docker.internal:1080"

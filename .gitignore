@@ -27,3 +27,4 @@ go.work.sum
 cache
 logs
 config.toml
+!docs/example/config/config.toml
